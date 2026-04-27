@@ -1,0 +1,82 @@
+{
+        "kind": "Template",
+        "apiVersion": "v1",
+        "metadata": {
+                "name": "${NAME}",
+                "annotations": {
+                        "tags": "${NAME}",
+                        "iconClass": "icon-${NAME}",
+                        "openshift.io/provider-display-name": "${NAME}-app"
+                }
+        },
+        "labels": {
+                "template": "${NAME}",
+                "app": "${NAME}"
+        },
+        "objects": [
+                {
+                        "apiVersion": "v1",
+                        "kind": "ImageStream",
+                        "metadata": {
+                                "name": "${NAME}"
+                        },
+                        "spec": {
+                                "lookupPolicy": {
+                                        "local": false
+                                }
+                        }
+                },
+                {
+                        "apiVersion": "v1",
+                        "kind": "BuildConfig",
+                        "metadata": {
+                                "labels": {
+                                        "app": "${NAME}"
+                                },
+                                "name": "${NAME}"
+                        },
+                        "spec": {
+                                "output": {
+                                        "to": {
+                                                "kind": "ImageStreamTag",
+                                                "name": "${NAME}:latest"
+                                        }
+                                },
+                                "source": {
+                                        "binary": {
+
+                                        },
+                                        "type": "Binary"
+                                },
+                                "strategy": {
+                                        "dockerStrategy": {
+                                           "dockerfilePath": "Dockerfile"                                               
+                                        }, 
+                                        "type": "Docker"
+                                }
+                        }
+                }
+        ],
+        "parameters": [
+                {
+                        "name": "NAME",
+                        "displayName": "Name",
+                        "required": true,
+                        "description": "name of the application"
+
+                },
+                 {
+                        "name": "ENV_PREPROD",
+                        "displayName": "Env",
+                        "required": true,
+                        "description": "Environment where it is deployed"
+
+                },
+                {
+                        "name": "PROJECT_PREPROD",
+                        "displayName": "Project",
+                        "description": "Project name where it will be deployed",
+                        "required": true
+                }
+        ]
+}
