@@ -1,0 +1,689 @@
+def templatePathDEV = "RECO_Bussiness_MS/RECO_Reaccommodation_MS/CICD/Template-dev.json"
+def quayRegistryHostname = "prod-iga-quay-image-registry.apps.ocpmgmtcl01.goindigo.in"
+def quayRegistryOrgNameDev = "planbreaccommodation-dev/reco-reaccommodation-ms"
+def quayRegistryOrgNameQA = "planbreaccommodation-qa/reco-reaccommodation-ms"
+def quayRegistryOrgNameUAT = "planbreaccommodation-uat/reco-reaccommodation-ms"
+def quayRegistryOrgNamePreProd = "planbreaccommodation-preprod/reco-reaccommodation-ms"
+def quayRegistryOrgNameProd = "planbreaccommodation-prod/reco-reaccommodation-ms"
+def clusterApiUrl= "https://api.ocpmgmtcl01.goindigo.in:6443"
+def ocpRegistryUrl ="image-registry.openshift-image-registry.svc:5000"
+def ocpSonarqubeUrl = "https://sonarqube-sonarqube.apps.ocpmgmtcl01.goindigo.in/"
+//Email ID's Detail
+def mailToRecipients = "priyanka.x.koneru@goindigo.in"
+def useremail = "OCP.notification@goindigo.in;awatar.kishan1@goindigo.in"
+def mailToRecipientsqa = "priyanka.x.koneru@goindigo.in"
+def mailToRecipientsuat = "priyanka.x.koneru@goindigo.in"
+def mailToRecipientspreprod = "priyanka.x.koneru@goindigo.in"
+def mailToRecipientsprod = "abhinav.srivastava@goindigo.in"
+
+pipeline {
+
+    agent { label 'dotnet-agent' }
+
+    environment {
+
+        PROJECT_DEV = "planbreaccommodation-dev"
+        PROJECT_QA = "planbreaccommodation-qa"
+        PROJECT_UAT = "planbreaccommodation-uat"
+        PROJECT_PREPROD = "planbreaccommodation-preprod"
+        PROJECT_PROD = "planbreaccommodation-prod"
+        NAME = "reco-reaccommodation-ms"
+	ENV_DEV = "dev"
+        ENV_QA = "qa"
+        ENV_UAT = "uat"
+        ENV_PREPROD = "preprod"
+        ENV_PROD = "prod"
+        QUAY_REPO_NAME_DEV="planbreaccommodation-dev/reco-reaccommodation-ms"
+        QUAY_REPO_NAME_QA="planbreaccommodation-qa/reco-reaccommodation-ms"
+        QUAY_REPO_NAME_UAT="planbreaccommodation-uat/reco-reaccommodation-ms"
+        QUAY_REPO_NAME_PREPROD="planbreaccommodation-preprod/reco-reaccommodation-ms"
+        QUAY_REPO_NAME_PROD="planbreaccommodation-prod/reco-reaccommodation-ms"
+        QUAY_URL="https://prod-iga-quay-image-registry.apps.ocpmgmtcl01.goindigo.in"
+        SONAR_KEY_PROJECT="reco-reaccommodation-ms"
+        SONAR_LOGIN=credentials('sonarqube_login_token')
+        SONAR_URL="https://sonarqube-sonarqube.apps.ocpmgmtcl01.goindigo.in"
+        PROJECTFILE_PATH="reco-reaccommodation-ms-ACM/RECO_Bussiness_MS/RECO_Reaccommodation_MS/RECO.Reaccommodation_MS.csproj"
+
+    }
+    stages {
+
+        stage('Checkout') {
+
+            steps {
+                checkout scm                
+            }
+        } //End of Stage Checkout
+
+
+       
+        stage('SonarQube analysis') {
+		
+          environment { 
+                MSBUILD_SQ_SCANNER_HOME = tool name: 'sonarqube_server_mgmt'
+            }
+            steps {
+             withSonarQubeEnv('sonarqube_server_mgmt') {
+                sh "dotnet tool install --global dotnet-sonarscanner --version 5.11.0"
+                sh "ls -ltr"
+                //sh "find /* -name SonarScanner.MSBuild.dll"
+                sh "dotnet /home/jenkins/.dotnet/tools/.store/dotnet-sonarscanner/5.11.0/dotnet-sonarscanner/5.11.0/tools/net5.0/any/SonarScanner.MSBuild.dll  begin /k:'${SONAR_KEY_PROJECT}' /d:sonar.host.url=${SONAR_URL} /d:sonar.login=${SONAR_LOGIN} " 
+                sh "dotnet build /home/jenkins/agent/workspace/${PROJECTFILE_PATH}"
+                sh "dotnet /home/jenkins/.dotnet/tools/.store/dotnet-sonarscanner/5.11.0/dotnet-sonarscanner/5.11.0/tools/net5.0/any/SonarScanner.MSBuild.dll end /d:sonar.login=${SONAR_LOGIN}"
+              }
+            }	
+        }  
+        // stage("Quality gate") {
+        //     steps {
+        //         waitForQualityGate abortPipeline: true
+        //     }
+        // post{
+        //         success {
+        //             emailext to: "${mailToRecipients}",
+        //             subject: "${NAME} Sonarqube (Code Analysis)",
+        //             body: " Sonarqube (Code Analysis) is Successful for ${NAME} with build number ${env.BUILD_NUMBER} <br> Sonarqube login URL ${ocpSonarqubeUrl} <br> Please check the report after login into sonarqube server URL by using Azure Active Directory Credentials"
+        //         }
+        //         failure {  
+        //             mail bcc: '', body: "<b>${NAME} sonarqube analysis failed. Please login using the following URL to check the report--->  ${ocpSonarqubeUrl} </b><br>Project: ${env.JOB_NAME} <br>Build Number: ${env.BUILD_NUMBER} <br> Build URL: ${env.BUILD_URL}", cc: '', charset: 'UTF-8', from: 'OCPSUPPORT@goindigo.in', mimeType: 'text/html', replyTo: '', subject: "SonarQube Quality Gate Failure: Project name -> ${env.JOB_NAME}", to: "${mailToRecipients}";  
+        //         }  
+        //    }
+        // } 
+
+        stage ('Deploy Template for Dev') {
+			
+
+            steps{
+                    script{
+                            try {
+                        openshift.withCluster() {
+                            openshift.withProject(env.PROJECT_DEV) {
+                                echo "Using project: ${openshift.project()}"
+
+                                def templateSelector = openshift.selector( "template", "${NAME}")
+
+                                if(openshift.selector("bc", [ template : "${NAME}"]).exists()){
+                                openshift.selector("bc", "${NAME}").delete();
+                                }
+                                if(openshift.selector("is", [ template : "${NAME}"]).exists()){
+                                openshift.selector("is", "${NAME}").delete();
+                                }
+
+                                openshift.newApp(templatePathDEV, "-p PROJECT_DEV=${env.PROJECT_DEV} -p NAME=${env.NAME} -p ENV_DEV=${env.ENV_DEV}")
+
+                                }
+                                }
+                                }
+
+                                catch ( e ) {
+                                    echo e.getMessage()
+                                    error "Deploy Template not successful."
+                                    }
+                        }
+                        }
+
+                } // End of Stage Deploy in dev Template
+
+        stage('Image build') {
+        steps{
+            script{
+                try {
+                timeout(time: 15, unit: 'MINUTES') {
+                openshift.withCluster() {
+                openshift.withProject(env.PROJECT_DEV) {
+                def build = openshift.selector("bc", "${NAME}").startBuild("--from-file=/home/jenkins/agent/workspace/reco-reaccommodation-ms-ACM/RECO_Bussiness_MS/RECO_Reaccommodation_MS", "--wait=true")
+                build.untilEach {
+                    echo "Using project in Image Build ${build}"
+                    return it.object().status.phase == "Complete"
+                }
+                }
+                }
+                }
+                echo "STAGE Image Build Template Finished"
+                }
+                catch ( e ) {
+                    echo e.getMessage()
+                    error "Build not successful."
+                }
+                }
+            }
+            } // End of Stage Image build
+			
+           stage('Push Image to QUAY') {	   
+                 steps {
+                    script {
+                        withCredentials([usernamePassword(credentialsId: 'quaycred', passwordVariable: 'QUAY_REGISTRY_USER_PASS', usernameVariable: 'QUAY_REGISTRY_USER_NAME'),
+                        usernamePassword(credentialsId: 'ocpClusterCreds', passwordVariable: 'CLUSTER_USER_PASS', usernameVariable: 'CLUSTER_USER_NAME')]) 
+                         {
+                           sh "oc login -u  ${CLUSTER_USER_NAME} -p \"${CLUSTER_USER_PASS}\" --insecure-skip-tls-verify=true ${clusterApiUrl} "
+                          def temptoken = sh(script: 'echo -n ${CLUSTER_USER_NAME}:`oc whoami -t`  | base64 ', returnStdout: true).trim()
+                           echo "temptoken is '${temptoken}'"
+                           registryEncodedToken  = temptoken.replaceAll("\n", "")
+
+                           def quaytoken = sh(script: 'echo -n ${QUAY_REGISTRY_USER_NAME}:${QUAY_REGISTRY_USER_PASS}  | base64 ', returnStdout: true).trim()
+                           
+                           sh """  
+                           echo "registryEncodedToken is '${registryEncodedToken}'"
+                           echo "quaytoken is '${quaytoken}'"
+                           cp /home/jenkins/docker/config.json /tmp/config.json
+                           cat  /tmp/config.json
+                           sed -i "s/SourceRegistryPass/$quaytoken/g" /tmp/config.json
+                          sed -i "s/SourceRegistry/$quayRegistryHostname/g"  /tmp/config.json
+                          sed -i "s/DestRegistryPass/$registryEncodedToken/g"  /tmp/config.json
+                           sed -i "s/DestRegistry/$ocpRegistryUrl/g"  /tmp/config.json
+                          
+                          cat  /tmp/config.json
+                          
+                           oc image mirror -a  /tmp/config.json  --insecure=true ${ocpRegistryUrl}/${PROJECT_DEV}/${NAME}:latest  ${quayRegistryHostname}/${quayRegistryOrgNameDev}:${env.BUILD_NUMBER}  
+                           """  
+                    }
+                    }
+        }
+         } // STAGE Push Image to QUAY END 
+
+
+          stage('Vulnerability Scan') {
+               
+           steps {
+                script {
+                    withCredentials([
+                    usernamePassword(credentialsId: 'quayapptoken', passwordVariable: 'QUAY_REGISTRY_USER_TOKEN', usernameVariable: 'username')]){
+                   openshift.withCluster() {
+                    openshift.withProject(env.DEV_NAMESPACE) {
+                        sh """
+                            echo "Setting the QUAY_REGISTRY_USER_TOKEN " 
+                            export tag=${env.BUILD_NUMBER}
+                            export QUAY_API_TOKEN=${QUAY_REGISTRY_USER_TOKEN}
+                            export IMAGE_ID_OUTPUT_FILE=/tmp/image-id.txt
+                           export VULNERABILITY_OUTPUT_FILE=/tmp/Vulnerability.txt
+                          /vulnerability_scan.sh 2> /dev/null || exit 0
+                           
+                       """      
+                   }
+                   }
+                    }
+               }
+            }
+        }
+
+        stage('Deployment In nonprod cluster Dev environment') {
+                    
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'githubtoken', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+                    sh """
+                    set -e
+                    git config --global user.email "BISWAJIT.DEY@GOINDIGO.IN"
+                    git config --global user.name "$USERNAME"
+                    rm -rf planb_reaccomodation
+                    echo "Cloning github code"
+                    git clone -b dev https://$USERNAME:$PASSWORD@github.com/dev-Indigo/planb_reaccomodation.git
+                    cd planb_reaccomodation/reco-reaccommodation-ms
+                    oc create configmap --dry-run=client reco-reaccommodation-ms --from-file=/home/jenkins/agent/workspace/reco-reaccommodation-ms-ACM/RECO_Bussiness_MS/RECO_Reaccommodation_MS/appsettings.development.json --output yaml > ConfigMap.yaml
+                    echo "Updating image tag in the deployment config"
+                    sed -i "s/image: prod-iga-quay-image-registry.apps.ocpmgmtcl01.goindigo.in\\/planbreaccommodation-dev\\/reco-reaccommodation-ms:[a-zA-Z0-9|.\\/|-]*/image: prod-iga-quay-image-registry.apps.ocpmgmtcl01.goindigo.in\\/planbreaccommodation-dev\\/reco-reaccommodation-ms:${env.BUILD_NUMBER}/" Deployment.yaml
+                   echo "Checking the modified tag value in the yaml"
+                   cat Deployment.yaml
+                  git add -u
+                    git commit -m "updating deployment yaml"
+                    git push https://$USERNAME:$PASSWORD@github.com/dev-Indigo/planb_reaccomodation.git
+                    """
+                }
+           }
+        }
+        }
+
+        stage('Deployment Confirmation for nonprod cluster QA environment') {
+                    
+            steps {
+                script {
+                    input message: 'Do you want to Deploy the application ${NAME}? in QA environment'
+                }
+            }
+        }
+        stage('Image Tag for QA environment nonprod') {		
+            steps {
+                script {
+                    openshift.withCluster() {
+                    openshift.tag("${PROJECT_DEV}/${NAME}:latest", "${PROJECT_QA}/${NAME}:${env.BUILD_NUMBER}")
+                }
+                echo "STAGE Image Tag  Finished"
+                }
+            }
+        }
+           stage('Push Image to QUAY QA ENV') {   
+                 steps {
+                      retry (count : 3) {
+                    script {
+                         withCredentials([usernamePassword(credentialsId: 'quaycred', passwordVariable: 'QUAY_REGISTRY_USER_PASS', usernameVariable: 'QUAY_REGISTRY_USER_NAME'),
+                         usernamePassword(credentialsId: 'ocpClusterCreds', passwordVariable: 'CLUSTER_USER_PASS', usernameVariable: 'CLUSTER_USER_NAME')]) 
+                         {
+                           sh "oc login -u  ${CLUSTER_USER_NAME} -p \"${CLUSTER_USER_PASS}\" --insecure-skip-tls-verify=true ${clusterApiUrl} "
+                           def temptoken = sh(script: 'echo -n ${CLUSTER_USER_NAME}:`oc whoami -t`  | base64 ', returnStdout: true).trim()
+                           echo "temptoken is '${temptoken}'"
+                           registryEncodedToken  = temptoken.replaceAll("\n", "")
+
+                           def quaytoken = sh(script: 'echo -n ${QUAY_REGISTRY_USER_NAME}:${QUAY_REGISTRY_USER_PASS}  | base64 ', returnStdout: true).trim()
+                           
+                           sh """  
+                           echo "registryEncodedToken is '${registryEncodedToken}'"
+                           echo "quaytoken is '${quaytoken}'"
+                           cp /home/jenkins/docker/config.json /tmp/config.json
+                           cat  /tmp/config.json
+                           sed -i "s/SourceRegistryPass/$quaytoken/g" /tmp/config.json
+                           sed -i "s/SourceRegistry/$quayRegistryHostname/g"  /tmp/config.json
+                           sed -i "s/DestRegistryPass/$registryEncodedToken/g"  /tmp/config.json
+                           sed -i "s/DestRegistry/$ocpRegistryUrl/g"  /tmp/config.json
+                           
+                           cat  /tmp/config.json
+                           
+                           oc image mirror -a  /tmp/config.json  --insecure=true ${ocpRegistryUrl}/${PROJECT_DEV}/${NAME}:latest  ${quayRegistryHostname}/${quayRegistryOrgNameQA}:${env.BUILD_NUMBER}  
+                          
+                           """  
+                    }
+                    }
+                }
+               }
+         } // STAGE Push Image to QUAY END 
+
+
+           stage('Vulnerability Scan QA env') {		   
+               
+            steps {
+                    script {
+                     withCredentials([
+                     usernamePassword(credentialsId: 'quayapptoken', passwordVariable: 'QUAY_REGISTRY_USER_TOKEN', usernameVariable: 'username')]){
+                        openshift.withCluster() {
+                        openshift.withProject(env.DEV_NAMESPACE) {
+                            sh """
+                                echo "Setting the QUAY_REGISTRY_USER_TOKEN " 
+                                export tag=${env.BUILD_NUMBER}
+                                export QUAY_API_TOKEN=${QUAY_REGISTRY_USER_TOKEN}
+                                export IMAGE_ID_OUTPUT_FILE=/tmp/image-id.txt
+                                export VULNERABILITY_OUTPUT_FILE=/tmp/Vulnerability.txt
+                                sleep 30s
+                                /vulnerability_scan.sh 2> /dev/null || exit 0
+                                
+                            """      
+                        }
+                        }
+                        }
+                    }
+            }
+        }
+
+        stage('Deployment In nonprod cluster QA environment') {	
+                    
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'githubtoken', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+                    sh """
+                    set -e
+                    git config --global user.email "BISWAJIT.DEY@GOINDIGO.IN"
+                    git config --global user.name "$USERNAME"
+                    rm -rf planb_reaccomodation
+                    echo "Cloning github code"
+                    git clone -b qa https://$USERNAME:$PASSWORD@github.com/dev-Indigo/planb_reaccomodation.git
+                    cd planb_reaccomodation/reco-reaccommodation-ms
+                    oc create configmap --dry-run=client reco-reaccommodation-ms --from-file=/home/jenkins/agent/workspace/reco-reaccommodation-ms-ACM/RECO_Bussiness_MS/RECO_Reaccommodation_MS/appsettings.qa.json --output yaml > ConfigMap.yaml
+                    echo "Updating image tag in the deployment config"
+                    sed -i "s/image: prod-iga-quay-image-registry.apps.ocpmgmtcl01.goindigo.in\\/planbreaccommodation-qa\\/reco-reaccommodation-ms:[a-zA-Z0-9|.\\/|-]*/image: prod-iga-quay-image-registry.apps.ocpmgmtcl01.goindigo.in\\/planbreaccommodation-qa\\/reco-reaccommodation-ms:${env.BUILD_NUMBER}/" Deployment.yaml
+                    echo "Checking the modified tag value in the yaml"
+                    cat Deployment.yaml
+                    git add -u
+                    git commit -m "updating deployment yaml"
+                    git push https://$USERNAME:$PASSWORD@github.com/dev-Indigo/planb_reaccomodation.git
+                    """
+                }
+            }
+        }
+        }
+        stage('Deployment Confirmation for nonprod cluster UAT environment') {
+                    
+            steps {
+                script {
+                    input message: 'Do you want to Deploy the application ${NAME}? in UAT environment'
+                }
+            }
+        }
+        stage('Image Tag for UAT environment nonprod') {
+            steps {
+                script {
+                    openshift.withCluster() {
+                    openshift.tag("${PROJECT_DEV}/${NAME}:latest", "${PROJECT_UAT}/${NAME}:${env.BUILD_NUMBER}")
+                }
+                echo "STAGE Image Tag  Finished"
+                }
+            }
+        }
+           stage('Push Image to QUAY UAT ENV') {
+                 steps {
+                      retry (count : 3) {
+                    script {
+                         withCredentials([usernamePassword(credentialsId: 'quaycred', passwordVariable: 'QUAY_REGISTRY_USER_PASS', usernameVariable: 'QUAY_REGISTRY_USER_NAME'),
+                         usernamePassword(credentialsId: 'ocpClusterCreds', passwordVariable: 'CLUSTER_USER_PASS', usernameVariable: 'CLUSTER_USER_NAME')]) 
+                         {
+                           sh "oc login -u  ${CLUSTER_USER_NAME} -p \"${CLUSTER_USER_PASS}\" --insecure-skip-tls-verify=true ${clusterApiUrl} "
+                           def temptoken = sh(script: 'echo -n ${CLUSTER_USER_NAME}:`oc whoami -t`  | base64 ', returnStdout: true).trim()
+                           echo "temptoken is '${temptoken}'"
+                           registryEncodedToken  = temptoken.replaceAll("\n", "")
+
+                           def quaytoken = sh(script: 'echo -n ${QUAY_REGISTRY_USER_NAME}:${QUAY_REGISTRY_USER_PASS}  | base64 ', returnStdout: true).trim()
+                           
+                           sh """  
+                           echo "registryEncodedToken is '${registryEncodedToken}'"
+                           echo "quaytoken is '${quaytoken}'"
+                           cp /home/jenkins/docker/config.json /tmp/config.json
+                           cat  /tmp/config.json
+                           sed -i "s/SourceRegistryPass/$quaytoken/g" /tmp/config.json
+                           sed -i "s/SourceRegistry/$quayRegistryHostname/g"  /tmp/config.json
+                           sed -i "s/DestRegistryPass/$registryEncodedToken/g"  /tmp/config.json
+                           sed -i "s/DestRegistry/$ocpRegistryUrl/g"  /tmp/config.json
+                          
+                           cat  /tmp/config.json
+                           
+                           oc image mirror -a  /tmp/config.json  --insecure=true ${ocpRegistryUrl}/${PROJECT_DEV}/${NAME}:latest  ${quayRegistryHostname}/${quayRegistryOrgNameUAT}:${env.BUILD_NUMBER}  
+                          
+                           """  
+                    }
+                    }
+      }
+               }
+         } // STAGE Push Image to QUAY END 
+
+
+           stage('Vulnerability Scan UAT env') {
+               
+            steps {
+                    script {
+                     withCredentials([
+                    usernamePassword(credentialsId: 'quayapptoken', passwordVariable: 'QUAY_REGISTRY_USER_TOKEN', usernameVariable: 'username')]){
+                        openshift.withCluster() {
+                        openshift.withProject(env.DEV_NAMESPACE) {
+                            sh """
+                                echo "Setting the QUAY_REGISTRY_USER_TOKEN " 
+                                export tag=${env.BUILD_NUMBER}
+                                export QUAY_API_TOKEN=${QUAY_REGISTRY_USER_TOKEN}
+                                export IMAGE_ID_OUTPUT_FILE=/tmp/image-id.txt
+                                export VULNERABILITY_OUTPUT_FILE=/tmp/Vulnerability.txt
+                                sleep 30s
+                                /vulnerability_scan.sh 2> /dev/null || exit 0
+                                
+                          """      
+                        }
+                        }
+                        }
+                    }
+            }
+       }
+
+        stage('Deployment In nonprod cluster UAT environment') {
+                    
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'githubtoken', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+                    sh """
+                    set -e
+                    git config --global user.email "BISWAJIT.DEY@GOINDIGO.IN"
+                    git config --global user.name "$USERNAME"
+                    rm -rf planb_reaccomodation
+                    echo "Cloning github code"
+                    git clone -b uat https://$USERNAME:$PASSWORD@github.com/dev-Indigo/planb_reaccomodation.git
+                    cd planb_reaccomodation/reco-reaccommodation-ms
+                    oc create configmap --dry-run=client reco-reaccommodation-ms --from-file=/home/jenkins/agent/workspace/reco-reaccommodation-ms-ACM/RECO_Bussiness_MS/RECO_Reaccommodation_MS/appsettings.uat.json --output yaml > ConfigMap.yaml
+                    echo "Updating image tag in the deployment config"
+                    sed -i "s/image: prod-iga-quay-image-registry.apps.ocpmgmtcl01.goindigo.in\\/planbreaccommodation-uat\\/reco-reaccommodation-ms:[a-zA-Z0-9|.\\/|-]*/image: prod-iga-quay-image-registry.apps.ocpmgmtcl01.goindigo.in\\/planbreaccommodation-uat\\/reco-reaccommodation-ms:${env.BUILD_NUMBER}/" Deployment.yaml
+                    echo "Checking the modified tag value in the yaml"
+                    cat Deployment.yaml
+                    git add -u
+                    git commit -m "updating deployment yaml"
+                    git push https://$USERNAME:$PASSWORD@github.com/dev-Indigo/planb_reaccomodation.git
+                    """
+                }            }
+       }
+       }
+
+        stage('Deployment Confirmation for nonprod cluster PREPROD environment') {
+                    
+            steps {
+                script {
+                    input message: 'Do you want to Deploy the application ${NAME}? in Preprod environment'
+                }
+            }
+        }
+
+
+        stage('Image Tag for PREPROD environment') {
+		
+            steps {
+                    script {
+                        openshift.withCluster() {
+                        openshift.tag("${PROJECT_DEV}/${NAME}:latest", "${PROJECT_PREPROD}/${NAME}:${env.BUILD_NUMBER}")
+                    }
+                    echo "STAGE Image Tag  Finished"
+                }
+            }
+        }
+           stage('Push Image to PREPROD QUAY') {
+		   
+                 steps {
+                      retry (count : 3) {
+                    script {
+                         withCredentials([usernamePassword(credentialsId: 'quaycred', passwordVariable: 'QUAY_REGISTRY_USER_PASS', usernameVariable: 'QUAY_REGISTRY_USER_NAME'),
+                         usernamePassword(credentialsId: 'ocpClusterCreds', passwordVariable: 'CLUSTER_USER_PASS', usernameVariable: 'CLUSTER_USER_NAME')]) 
+                         {
+                           sh "oc login -u  ${CLUSTER_USER_NAME} -p \"${CLUSTER_USER_PASS}\" --insecure-skip-tls-verify=true ${clusterApiUrl} "
+                           def temptoken = sh(script: 'echo -n ${CLUSTER_USER_NAME}:`oc whoami -t`  | base64 ', returnStdout: true).trim()
+                           echo "temptoken is '${temptoken}'"
+                           registryEncodedToken  = temptoken.replaceAll("\n", "")
+
+                           def quaytoken = sh(script: 'echo -n ${QUAY_REGISTRY_USER_NAME}:${QUAY_REGISTRY_USER_PASS}  | base64 ', returnStdout: true).trim()
+                           
+                           sh """  
+                           echo "registryEncodedToken is '${registryEncodedToken}'"
+                           echo "quaytoken is '${quaytoken}'"
+                           cp /home/jenkins/docker/config.json /tmp/config.json
+                           cat  /tmp/config.json
+                           sed -i "s/SourceRegistryPass/$quaytoken/g" /tmp/config.json
+                           sed -i "s/SourceRegistry/$quayRegistryHostname/g"  /tmp/config.json
+                           sed -i "s/DestRegistryPass/$registryEncodedToken/g"  /tmp/config.json
+                           sed -i "s/DestRegistry/$ocpRegistryUrl/g"  /tmp/config.json
+                           
+                           cat  /tmp/config.json
+                           
+                           oc image mirror -a  /tmp/config.json  --insecure=true ${ocpRegistryUrl}/${PROJECT_DEV}/${NAME}:latest  ${quayRegistryHostname}/${quayRegistryOrgNamePreProd}:${env.BUILD_NUMBER}  
+                          
+                           """  
+                    }
+                    }
+      }
+               }
+         } // STAGE Push Image to QUAY END 
+
+           stage('Vulnerability Scan PREPROD') {
+			   
+          
+            steps {
+                    script {
+                     withCredentials([
+                     usernamePassword(credentialsId: 'quayapptoken', passwordVariable: 'QUAY_REGISTRY_USER_TOKEN', usernameVariable: 'username')]){
+                        openshift.withCluster() {
+                        openshift.withProject(env.DEV_NAMESPACE) {
+                            sh """
+                                echo "Setting the QUAY_REGISTRY_USER_TOKEN " 
+                                export tag=${env.BUILD_NUMBER}
+                                export QUAY_API_TOKEN=${QUAY_REGISTRY_USER_TOKEN}
+                                export IMAGE_ID_OUTPUT_FILE=/tmp/image-id.txt
+                                export VULNERABILITY_OUTPUT_FILE=/tmp/Vulnerability.txt
+                                sleep 30s
+                                /vulnerability_scan.sh 2> /dev/null || exit 0
+                                
+                            """      
+                        }
+                        }
+                        }
+                    }
+            }
+        }
+
+        stage('Deployment In nonprod cluster PreProd environment') {
+		
+                    
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'githubtoken', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+                    sh """
+                    set -e
+                    git config --global user.email "BISWAJIT.DEY@GOINDIGO.IN"
+                    git config --global user.name "$USERNAME"
+                    rm -rf planb_reaccomodation
+                    echo "Cloning github code"
+                    git clone -b preprod https://$USERNAME:$PASSWORD@github.com/dev-Indigo/planb_reaccomodation.git
+                    cd planb_reaccomodation/reco-reaccommodation-ms
+                    oc create configmap --dry-run=client reco-reaccommodation-ms --from-file=/home/jenkins/agent/workspace/reco-reaccommodation-ms-ACM/RECO_Bussiness_MS/RECO_Reaccommodation_MS/appsettings.preprod.json --output yaml > ConfigMap.yaml
+                    echo "Updating image tag in the deployment config"
+                    sed -i "s/image: prod-iga-quay-image-registry.apps.ocpmgmtcl01.goindigo.in\\/planbreaccommodation-preprod\\/reco-reaccommodation-ms:[a-zA-Z0-9|.\\/|-]*/image: prod-iga-quay-image-registry.apps.ocpmgmtcl01.goindigo.in\\/planbreaccommodation-preprod\\/reco-reaccommodation-ms:${env.BUILD_NUMBER}/" Deployment.yaml
+                    echo "Checking the modified tag value in the yaml"
+                    cat Deployment.yaml
+                    git add -u
+                    git commit -m "updating deployment yaml"
+                    git push https://$USERNAME:$PASSWORD@github.com/dev-Indigo/planb_reaccomodation.git
+                    """
+                }
+            }
+        }
+        }
+        stage('Email Approval for Prod deployment') {
+		
+            steps {  
+                    script {
+        emailext mimeType: 'text/html',
+                 subject: "[Jenkins]-Approval for Prod deployment ${currentBuild.fullDisplayName}",
+                 to: "${mailToRecipientsqa}",
+                 body: '''
+                        Dear Team, <br>
+                            <br>                     
+                            Deployment of reco-reaccommodation-ms application in the Preprod environment is completed. <br>
+                            Kindly <a href="${BUILD_URL}input">click here to approve</a> for Prod deployment. <br> 
+                            <br>
+                            <br>
+                         Thanks & Regards,<br>
+                         OCP-Team <br>
+                         '''
+
+        def userInput = input id: 'userInput',
+                              message: 'Do you approve?', 
+                              submitterParameter: 'submitter',
+                              submitter: 'abhinav.srivastava@goindigo.in-admin-edit-view',
+                              parameters: [
+                                [$class: 'TextParameterDefinition', defaultValue: 'Proceed only with Email Approval', name: 'Comment']]
+
+        echo ("Comment: "+userInput['Comment'])
+        echo ("submitted by: "+userInput['submitter'])
+    }
+    }
+    }
+
+        stage('Image Tag for Prod environment') {
+		
+            steps {
+                script {
+                    openshift.withCluster() {
+                    openshift.tag("${PROJECT_DEV}/${NAME}:latest", "${PROJECT_PROD}/${NAME}:${env.BUILD_NUMBER}")
+                }
+                echo "STAGE Image Tag  Finished"
+                }
+            }
+        }
+    stage('Push Image to QUAY PROD environment') {
+
+                 steps {
+                      retry (count : 3) {
+                    script {
+                         withCredentials([usernamePassword(credentialsId: 'quaycred', passwordVariable: 'QUAY_REGISTRY_USER_PASS', usernameVariable: 'QUAY_REGISTRY_USER_NAME'),
+                         usernamePassword(credentialsId: 'ocpClusterCreds', passwordVariable: 'CLUSTER_USER_PASS', usernameVariable: 'CLUSTER_USER_NAME')]) 
+                         {
+                           sh "oc login -u  ${CLUSTER_USER_NAME} -p \"${CLUSTER_USER_PASS}\" --insecure-skip-tls-verify=true ${clusterApiUrl} "
+                           def temptoken = sh(script: 'echo -n ${CLUSTER_USER_NAME}:`oc whoami -t`  | base64 ', returnStdout: true).trim()
+                           echo "temptoken is '${temptoken}'"
+                           registryEncodedToken  = temptoken.replaceAll("\n", "")
+
+                           def quaytoken = sh(script: 'echo -n ${QUAY_REGISTRY_USER_NAME}:${QUAY_REGISTRY_USER_PASS}  | base64 ', returnStdout: true).trim()
+                           
+                           sh """  
+                           echo "registryEncodedToken is '${registryEncodedToken}'"
+                           echo "quaytoken is '${quaytoken}'"
+                           cp /home/jenkins/docker/config.json /tmp/config.json
+                           cat  /tmp/config.json
+                           sed -i "s/SourceRegistryPass/$quaytoken/g" /tmp/config.json
+                           sed -i "s/SourceRegistry/$quayRegistryHostname/g"  /tmp/config.json
+                           sed -i "s/DestRegistryPass/$registryEncodedToken/g"  /tmp/config.json
+                           sed -i "s/DestRegistry/$ocpRegistryUrl/g"  /tmp/config.json
+                           
+                           cat  /tmp/config.json
+                           
+                           oc image mirror -a  /tmp/config.json  --insecure=true ${ocpRegistryUrl}/${PROJECT_DEV}/${NAME}:latest  ${quayRegistryHostname}/${quayRegistryOrgNameProd}:${env.BUILD_NUMBER}  
+                          
+                           """  
+                    }
+                    }
+                }
+               }
+         } // STAGE Push Image to QUAY END 
+
+
+           stage('Vulnerability Scan PROD env') {
+		   
+               
+            steps {
+                    script {
+                     withCredentials([
+                     usernamePassword(credentialsId: 'quayapptoken', passwordVariable: 'QUAY_REGISTRY_USER_TOKEN', usernameVariable: 'username')]){
+                        openshift.withCluster() {
+                        openshift.withProject(env.DEV_NAMESPACE) {
+                            sh """
+                                echo "Setting the QUAY_REGISTRY_USER_TOKEN " 
+                                export tag=${env.BUILD_NUMBER}
+                                export QUAY_API_TOKEN=${QUAY_REGISTRY_USER_TOKEN}
+                                export IMAGE_ID_OUTPUT_FILE=/tmp/image-id.txt
+                                export VULNERABILITY_OUTPUT_FILE=/tmp/Vulnerability.txt
+                                sleep 30s
+                                /vulnerability_scan.sh 2> /dev/null || exit 0
+                                
+                            """      
+                        }
+                        }
+                        }
+                    }
+            }
+        }
+
+        stage('Deployment In IAAS prod cluster Production environment') {
+	
+                    
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'githubtoken', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
+                    sh """
+                    set -e
+                    git config --global user.email "BISWAJIT.DEY@GOINDIGO.IN"
+                    git config --global user.name "$USERNAME"
+                    rm -rf reco-reaccommodation-ms
+                    echo "Cloning github code"
+                    git clone -b main https://$USERNAME:$PASSWORD@github.com/dev-Indigo/reco-reaccommodation-ms.git
+                    cd reco-reaccommodation-ms
+                    oc create configmap --dry-run=client reco-reaccommodation-ms --from-file=/home/jenkins/agent/workspace/reco-reaccommodation-ms-ACM/RECO_Bussiness_MS/RECO_Reaccommodation_MS/appsettings.prod.json --output yaml > ConfigMap.yaml
+                    echo "Updating image tag in the deployment config"
+                    sed -i "s/image: prod-iga-quay-image-registry.apps.ocpmgmtcl01.goindigo.in\\/planbreaccommodation-prod\\/reco-reaccommodation-ms:[a-zA-Z0-9|.\\/|-]*/image: prod-iga-quay-image-registry.apps.ocpmgmtcl01.goindigo.in\\/planbreaccommodation-prod\\/reco-reaccommodation-ms:${env.BUILD_NUMBER}/" Deployment.yaml
+                    echo "Checking the modified tag value in the yaml"
+                    cat Deployment.yaml
+                    git add -u
+                    git commit -m "updating deployment yaml"
+                    git push https://$USERNAME:$PASSWORD@github.com/dev-Indigo/reco-reaccommodation-ms.git
+                    """
+                }
+            }
+        }	
+        }
+        		
+    } //End of Stages
+
+} //End of Pipeline
